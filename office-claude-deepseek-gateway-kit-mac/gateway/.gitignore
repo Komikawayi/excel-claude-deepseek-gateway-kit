@@ -1,0 +1,37 @@
+# 环境配置
+.env
+.env.local
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志与进程文件
+*.log
+.gateway.pid
+
+# macOS 特定
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 本地HTTPS证书（生成后不应提交）
+certs/
+
+# 依赖
+*.egg-info/
+dist/
+build/
