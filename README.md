@@ -1,13 +1,8 @@
-﻿# Excel Claude + DeepSeek Gateway Kit
+﻿# Office Claude + DeepSeek Gateway Kit
 
-更新时间：2026-05-08
+更新时间：2026-05-09
 
-这个目录是可直接上传到 GitHub 的最小完整包，包含：
-
-- 网关源码（FastAPI）
-- 启停脚本（PowerShell + bat）
-- 使用文档（实战总结 + SOP）
-- 安全扫描结果（Bandit + pip-audit）
+添加对macos的支持
 
 ## 目录结构
 
