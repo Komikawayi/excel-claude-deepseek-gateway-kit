@@ -82,6 +82,7 @@ http://127.0.0.1:8787
 cd D:\scrapling_study\gateway
 powershell -ExecutionPolicy Bypass -File .\run-gateway.ps1
 ```
+#这里需要切换自己电脑的路径
 
 另开一个终端执行：
 
