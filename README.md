@@ -1,6 +1,7 @@
 ﻿# Office Claude + DeepSeek Gateway Kit
 
-更新时间：2026-05-09
+更新时间：2026-05-10
+目前已经支持win和mac两个版本，按需下载即可
 
 添加对macos的支持
 
