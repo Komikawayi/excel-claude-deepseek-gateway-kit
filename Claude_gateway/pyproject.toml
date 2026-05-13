@@ -1,0 +1,25 @@
+[project]
+name = "claude-gateway"
+version = "2.0.0"
+description = "Claude-compatible gateway that proxies to DeepSeek/Kimi/MiMo"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0"]
+
+[project.scripts]
+claude-gateway = "claude_gateway.main:cli"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
