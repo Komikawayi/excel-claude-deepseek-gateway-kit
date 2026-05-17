@@ -312,6 +312,106 @@ class MiMoProvider(ProviderConfig):
 
 
 # =============================================================================
+# MiniMax Provider — PAYG / Coding Plan 双计费（同 Anthropic 协议）
+# =============================================================================
+
+class MiniMaxProvider(ProviderConfig):
+    """MiniMax provider 配置，支持 PAYG 与 Coding Plan（Token Plan）双计费。"""
+
+    def __init__(self):
+        super().__init__("minimax", "MINIMAX")
+        self.base_urls = {
+            "cn": os.getenv("MINIMAX_BASE_URL_CN", "https://api.minimaxi.com/anthropic").rstrip("/"),
+            "global": os.getenv("MINIMAX_BASE_URL_GLOBAL", "https://api.minimax.io/anthropic").rstrip("/"),
+        }
+        self.region_default = os.getenv("MINIMAX_REGION", "cn").strip().lower() or "cn"
+
+        self.model_primary = self.model_primary or "MiniMax-M2.7"
+        self.model_mid = self.model_mid or "MiniMax-M2.5"
+        self.model_fast = self.model_fast or "MiniMax-M2.5-highspeed"
+
+        if self.region_default not in self.base_urls:
+            print(f"[gateway startup] invalid MINIMAX_REGION={self.region_default!r}; fallback=cn")
+            self.region_default = "cn"
+
+    def resolve_upstream_key(self, req: Request) -> str:
+        token = self.api_key or self._extract_incoming_token(req)
+        if not token:
+            raise HTTPException(status_code=401, detail="No API key available (env or incoming token)")
+
+        # MiniMax 官方双计费 key：
+        #   sk-api-* -> PAYG
+        #   sk-cp-*  -> Coding Plan / Token Plan
+        if token.startswith("sk-api-") or token.startswith("sk-cp-"):
+            return token
+
+        raise HTTPException(status_code=401, detail="Invalid API key prefix for MiniMax, expected sk-api- or sk-cp-")
+
+    def _resolve_region(self, req: Request) -> str:
+        override_region = req.headers.get("x-minimax-region", "").strip().lower()
+        if not override_region:
+            return self.region_default
+        if override_region not in self.base_urls:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid x-minimax-region, expected one of: cn, global",
+            )
+        return override_region
+
+    def resolve_upstream_url(self, req: Request) -> Tuple[str, str, str]:
+        upstream_key = self.resolve_upstream_key(req)
+        region = self._resolve_region(req)
+        base_url = self.base_urls[region]
+
+        if upstream_key.startswith("sk-api-"):
+            return upstream_key, f"{base_url}/v1/messages", f"minimax:payg:{region}"
+        if upstream_key.startswith("sk-cp-"):
+            return upstream_key, f"{base_url}/v1/messages", f"minimax:codingplan:{region}"
+
+        raise HTTPException(status_code=401, detail="Invalid API key prefix, expected sk-api- or sk-cp-")
+
+    def route_model(self, model_id: str, route_kind: str = "") -> str:
+        """MiniMax 三档映射：Opus->primary, Sonnet->mid, Haiku->fast。"""
+        value = (model_id or "").strip()
+        if not value:
+            return self.model_primary
+
+        alias_map = {
+            self.alias_opus: self.model_primary,
+            self.alias_opus_versioned: self.model_primary,
+            self.alias_sonnet: self.model_mid,
+            self.alias_sonnet_versioned: self.model_mid,
+            self.alias_haiku: self.model_fast,
+            self.alias_haiku_versioned: self.model_fast,
+            "opus": self.model_primary,
+            "sonnet": self.model_mid,
+            "haiku": self.model_fast,
+            self.model_primary: self.model_primary,
+            self.model_mid: self.model_mid,
+            self.model_fast: self.model_fast,
+        }
+        result = alias_map.get(value)
+        if result is not None:
+            if result != value:
+                print(f"[gateway model] mapped {value!r} -> {result!r}")
+            return result
+
+        lower = value.lower()
+        if lower.startswith("claude-opus"):
+            print(f"[gateway model] prefix-matched {value!r} (claude-opus*) -> {self.model_primary!r}")
+            return self.model_primary
+        if lower.startswith("claude-sonnet"):
+            print(f"[gateway model] prefix-matched {value!r} (claude-sonnet*) -> {self.model_mid!r}")
+            return self.model_mid
+        if lower.startswith("claude-haiku"):
+            print(f"[gateway model] prefix-matched {value!r} (claude-haiku*) -> {self.model_fast!r}")
+            return self.model_fast
+
+        print(f"[gateway model] unknown model {value!r}, fallback -> {self.model_primary!r}")
+        return self.model_primary
+
+
+# =============================================================================
 # Auto Provider — 根据 incoming key 前缀自动路由到对应 provider
 # =============================================================================
 
@@ -340,6 +440,7 @@ class AutoProvider(ProviderConfig):
         self._deepseek = DeepSeekProvider()
         self._kimi = KimiProvider()
         self._mimo = MiMoProvider()
+        self._minimax = MiniMaxProvider()
 
         # 通用配置（从任意 provider 或全局读取）
         self.default_max_tokens = _int_env("DEFAULT_MAX_TOKENS", 4096)
@@ -389,7 +490,7 @@ class AutoProvider(ProviderConfig):
     def _detect_provider_and_key(self, req: Request) -> Tuple[ProviderConfig, str]:
         """根据 incoming key 前缀检测应该使用哪个 provider。"""
         # 优先检查各 provider 的 env key
-        for provider in [self._deepseek, self._kimi, self._mimo]:
+        for provider in [self._deepseek, self._kimi, self._mimo, self._minimax]:
             if provider.api_key:
                 print(
                     f"[gateway auto] env key found for {provider.name}, "
@@ -485,6 +586,10 @@ class AutoProvider(ProviderConfig):
         if route_kind == "deepseek":
             return self._deepseek.route_model(model_id, route_kind)
 
+        # minimax:* -> MiniMax
+        if route_kind.startswith("minimax:"):
+            return self._minimax.route_model(model_id, route_kind)
+
         # mimo:token-plan / mimo:payg → MiMo
         if route_kind.startswith("mimo:"):
             return self._mimo.route_model(model_id, route_kind)
@@ -501,6 +606,7 @@ PROVIDER_REGISTRY: Dict[str, type] = {
     "deepseek": DeepSeekProvider,
     "kimi": KimiProvider,
     "mimo": MiMoProvider,
+    "minimax": MiniMaxProvider,
     "auto": AutoProvider,
 }
 
@@ -513,6 +619,7 @@ def load_provider() -> ProviderConfig:
       - deepseek: DeepSeek（需要 DEEPSEEK_API_KEY）
       - kimi: Kimi/Moonshot（需要 KIMI_API_KEY）
       - mimo: MiMo（需要 MIMO_API_KEY）
+      - minimax: MiniMax（需要 MINIMAX_API_KEY）
       - auto: 自动模式，根据 incoming key 前缀路由（无需设置单一 API key）
     """
     active = os.getenv("ACTIVE_PROVIDER", "").strip().lower()
