@@ -94,6 +94,7 @@ def _reload_main(monkeypatch: pytest.MonkeyPatch, env_overrides: Dict[str, str |
         "DEEPSEEK_MODEL_PRIMARY", "DEEPSEEK_MODEL_MID", "DEEPSEEK_MODEL_FAST",
         "KIMI_MODEL_PRIMARY", "KIMI_MODEL_MID", "KIMI_MODEL_FAST",
         "MIMO_MODEL_PRIMARY", "MIMO_MODEL_MID", "MIMO_MODEL_FAST",
+        "MINIMAX_MODEL_PRIMARY", "MINIMAX_MODEL_MID", "MINIMAX_MODEL_FAST",
         "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
         "KIMI_API_KEY", "UPSTREAM_API_KEY",
         "KIMI_CODING_BASE_URL", "CODINGPLAN_BASE_URL",
@@ -102,6 +103,8 @@ def _reload_main(monkeypatch: pytest.MonkeyPatch, env_overrides: Dict[str, str |
         "MIMO_API_KEY", "MIMO_PAYG_BASE_URL",
         "MIMO_TP_REGION", "MIMO_TP_BASE_URL_CN",
         "MIMO_TP_BASE_URL_SGP", "MIMO_TP_BASE_URL_AMS",
+        "MINIMAX_API_KEY", "MINIMAX_REGION",
+        "MINIMAX_BASE_URL_CN", "MINIMAX_BASE_URL_GLOBAL",
         "GATEWAY_PASSTHROUGH_METADATA",
         "ALIAS_SONNET", "ALIAS_SONNET_VERSIONED",
         "ALIAS_OPUS", "ALIAS_OPUS_VERSIONED",
@@ -418,6 +421,173 @@ class TestMiMoProvider:
         client = TestClient(module.app)
         response = client.post("/v1/messages", headers={"x-api-key": "bad-prefix"}, json=_build_base_body())
         assert response.status_code == 401
+
+
+class TestMiniMaxProvider:
+    def test_sk_api_routes_to_payg(self, monkeypatch):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            body = json.loads(request.content)
+            captured["model"] = body["model"]
+            return httpx.Response(200, json={"id": "ok", "type": "message", "content": []})
+
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+            "MINIMAX_REGION": "cn",
+            "MINIMAX_BASE_URL_CN": "https://api.minimaxi.com/anthropic",
+            "MODEL_PRIMARY": "MiniMax-M2.7",
+            "MODEL_MID": "MiniMax-M2.5",
+            "MODEL_FAST": "MiniMax-M2.5-highspeed",
+        })
+        _wire_async_client(monkeypatch, module, handler)
+        client = TestClient(module.app)
+
+        body = _build_base_body()
+        body["model"] = "claude-opus-4-5"
+        response = client.post("/v1/messages", headers={"x-api-key": "sk-api-123"}, json=body)
+        assert response.status_code == 200
+        assert captured["url"] == "https://api.minimaxi.com/anthropic/v1/messages"
+        assert captured["model"] == "MiniMax-M2.7"
+
+    def test_sk_cp_routes_to_codingplan(self, monkeypatch):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            body = json.loads(request.content)
+            captured["model"] = body["model"]
+            return httpx.Response(200, json={"id": "ok", "type": "message", "content": []})
+
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+            "MINIMAX_REGION": "cn",
+            "MINIMAX_BASE_URL_CN": "https://api.minimaxi.com/anthropic",
+            "MODEL_PRIMARY": "MiniMax-M2.7",
+            "MODEL_MID": "MiniMax-M2.5",
+            "MODEL_FAST": "MiniMax-M2.5-highspeed",
+        })
+        _wire_async_client(monkeypatch, module, handler)
+        client = TestClient(module.app)
+
+        body = _build_base_body()
+        body["model"] = "claude-sonnet-4-5"
+        response = client.post("/v1/messages", headers={"x-api-key": "sk-cp-456"}, json=body)
+        assert response.status_code == 200
+        assert captured["url"] == "https://api.minimaxi.com/anthropic/v1/messages"
+        assert captured["model"] == "MiniMax-M2.5"
+
+    def test_haiku_maps_to_highspeed(self, monkeypatch):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            body = json.loads(request.content)
+            captured["model"] = body["model"]
+            return httpx.Response(200, json={"id": "ok", "type": "message", "content": []})
+
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+            "MINIMAX_BASE_URL_CN": "https://api.minimaxi.com/anthropic",
+            "MODEL_PRIMARY": "MiniMax-M2.7",
+            "MODEL_MID": "MiniMax-M2.5",
+            "MODEL_FAST": "MiniMax-M2.5-highspeed",
+        })
+        _wire_async_client(monkeypatch, module, handler)
+        client = TestClient(module.app)
+
+        body = _build_base_body()
+        body["model"] = "claude-haiku-4-5"
+        response = client.post("/v1/messages", headers={"x-api-key": "sk-api-123"}, json=body)
+        assert response.status_code == 200
+        assert captured["url"] == "https://api.minimaxi.com/anthropic/v1/messages"
+        assert captured["model"] == "MiniMax-M2.5-highspeed"
+
+    def test_region_override_global(self, monkeypatch):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            return httpx.Response(200, json={"id": "ok", "type": "message", "content": []})
+
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+            "MINIMAX_REGION": "cn",
+            "MINIMAX_BASE_URL_CN": "https://api.minimaxi.com/anthropic",
+            "MINIMAX_BASE_URL_GLOBAL": "https://api.minimax.io/anthropic",
+        })
+        _wire_async_client(monkeypatch, module, handler)
+        client = TestClient(module.app)
+
+        response = client.post(
+            "/v1/messages",
+            headers={"x-api-key": "sk-cp-456", "x-minimax-region": "global"},
+            json=_build_base_body(),
+        )
+        assert response.status_code == 200
+        assert captured["url"] == "https://api.minimax.io/anthropic/v1/messages"
+
+    def test_invalid_region_returns_400(self, monkeypatch):
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+            "MINIMAX_REGION": "cn",
+        })
+        client = TestClient(module.app)
+        response = client.post(
+            "/v1/messages",
+            headers={"x-api-key": "sk-api-123", "x-minimax-region": "moon"},
+            json=_build_base_body(),
+        )
+        assert response.status_code == 400
+
+    def test_invalid_key_prefix_returns_401(self, monkeypatch):
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+        })
+        client = TestClient(module.app)
+        response = client.post("/v1/messages", headers={"x-api-key": "sk-legacy-123"}, json=_build_base_body())
+        assert response.status_code == 401
+
+    def test_upstream_429_passthrough(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, json={"error": {"type": "rate_limit", "code": 1002, "message": "too fast"}})
+
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "sk-api-test",
+            "MINIMAX_BASE_URL_CN": "https://api.minimaxi.com/anthropic",
+        })
+        _wire_async_client(monkeypatch, module, handler)
+        client = TestClient(module.app)
+
+        response = client.post("/v1/messages", json=_build_base_body())
+        assert response.status_code == 429
+        body = response.json()
+        assert body["error"]["type"] == "rate_limit"
+
+    def test_upstream_402_passthrough_for_token_plan_quota(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(402, json={"error": {"type": "quota_exceeded", "code": 2056, "message": "quota"}})
+
+        module = _reload_main(monkeypatch, {
+            "ACTIVE_PROVIDER": "minimax",
+            "MINIMAX_API_KEY": "",
+            "MINIMAX_BASE_URL_CN": "https://api.minimaxi.com/anthropic",
+        })
+        _wire_async_client(monkeypatch, module, handler)
+        client = TestClient(module.app)
+
+        response = client.post("/v1/messages", headers={"x-api-key": "sk-cp-456"}, json=_build_base_body())
+        assert response.status_code == 402
+        body = response.json()
+        assert body["error"]["type"] == "quota_exceeded"
 
 
 class TestAutoProvider:
