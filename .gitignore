@@ -1,0 +1,16 @@
+# secrets
+**/.env
+!.env.example
+!**/.env.example
+
+# python cache
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# logs
+*.log
+*.err
+
+# local config
+.claude/
