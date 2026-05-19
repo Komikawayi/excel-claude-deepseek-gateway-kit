@@ -57,6 +57,16 @@ uvicorn --app-dir src claude_gateway.main:app --host 127.0.0.1 --port 8790
 curl http://127.0.0.1:8790/healthz
 ```
 
+### 1.4 NPM 包装入口（可选）
+
+说明：网关本体仍是 Python；`npm` 仅作为命令包装层，方便 Node 用户统一操作。
+
+```bash
+cd ..
+npm run gateway:install
+npm run gateway:start
+```
+
 ---
 
 ## 2. 对外接口（固定）
