@@ -1,0 +1,13 @@
+{
+  "name": "excel-claude-deepseek-gateway-kit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NPM wrapper for the Python-based Claude Gateway Unified project.",
+  "scripts": {
+    "gateway:help": "node ./scripts/gateway-wrapper.cjs help",
+    "gateway:install": "node ./scripts/gateway-wrapper.cjs install",
+    "gateway:start": "node ./scripts/gateway-wrapper.cjs start",
+    "gateway:start:direct": "node ./scripts/gateway-wrapper.cjs start:direct",
+    "gateway:test": "node ./scripts/gateway-wrapper.cjs test"
+  }
+}
