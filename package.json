@@ -8,6 +8,10 @@
     "gateway:install": "node ./scripts/gateway-wrapper.cjs install",
     "gateway:start": "node ./scripts/gateway-wrapper.cjs start",
     "gateway:start:direct": "node ./scripts/gateway-wrapper.cjs start:direct",
-    "gateway:test": "node ./scripts/gateway-wrapper.cjs test"
+    "gateway:test": "node ./scripts/gateway-wrapper.cjs test",
+    "gateway:macos:help": "node ./scripts/gateway-wrapper-macos.cjs help",
+    "gateway:macos:install": "node ./scripts/gateway-wrapper-macos.cjs install",
+    "gateway:macos:start": "node ./scripts/gateway-wrapper-macos.cjs start",
+    "gateway:macos:test": "node ./scripts/gateway-wrapper-macos.cjs test"
   }
 }

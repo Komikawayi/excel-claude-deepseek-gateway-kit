@@ -45,6 +45,6 @@ if (Test-Path $envFile) {
   }
 }
 
-$port = if ($env:GATEWAY_PORT) { $env:GATEWAY_PORT } else { '8790' }
+$port = if ($env:GATEWAY_PORT) { $env:GATEWAY_PORT } else { '8890' }
 Write-Host "Starting gateway on port $port ..." -ForegroundColor Green
-.\.venv\Scripts\python.exe -m uvicorn claude_gateway.main:app --host 127.0.0.1 --port $port --no-use-colors
+.\.venv\Scripts\python.exe -m uvicorn claude_gateway_macos.main:app --host 127.0.0.1 --port $port --no-use-colors

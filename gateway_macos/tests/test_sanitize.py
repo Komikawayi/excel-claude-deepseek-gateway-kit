@@ -1,9 +1,17 @@
 import json
+import sys
+from pathlib import Path
 from typing import Any, Dict
 
 import pytest
 
-from claude_gateway.sanitize import (
+THIS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = THIS_DIR.parent
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from claude_gateway_macos.sanitize import (
     MAX_IMAGE_BASE64_LEN,
     MAX_TOOL_INPUT_DEPTH,
     get_supported_content_types,

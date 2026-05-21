@@ -1,7 +1,16 @@
+import sys
+from pathlib import Path
+
 import httpx
 import pytest
 
-from claude_gateway import web_search
+THIS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = THIS_DIR.parent
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from claude_gateway_macos import web_search
 
 
 def test_search_duckduckgo_retries_once_on_connect_timeout_then_success(monkeypatch):

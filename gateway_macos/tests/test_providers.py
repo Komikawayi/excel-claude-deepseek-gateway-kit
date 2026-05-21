@@ -11,8 +11,9 @@ from fastapi.testclient import TestClient
 
 THIS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = THIS_DIR.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 
 def _build_base_body(stream: bool = False) -> Dict[str, Any]:
@@ -125,10 +126,10 @@ def _reload_main(monkeypatch: pytest.MonkeyPatch, env_overrides: Dict[str, str |
 
     # 清除已加载的模块以重新加载
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("claude_gateway."):
+        if mod_name.startswith("claude_gateway_macos."):
             del sys.modules[mod_name]
 
-    module = importlib.import_module("claude_gateway.main")
+    module = importlib.import_module("claude_gateway_macos.main")
     return module
 
 
@@ -147,9 +148,9 @@ def test_cli_provider_passed_to_child_env(monkeypatch):
 
     monkeypatch.setenv("ACTIVE_PROVIDER", "deepseek")
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("claude_gateway."):
+        if mod_name.startswith("claude_gateway_macos."):
             del sys.modules[mod_name]
-    module = importlib.import_module("claude_gateway.main")
+    module = importlib.import_module("claude_gateway_macos.main")
 
     captured: Dict[str, Any] = {}
 
@@ -163,12 +164,110 @@ def test_cli_provider_passed_to_child_env(monkeypatch):
         return _Result()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(sys, "argv", ["claude-gateway", "--provider", "mimo", "--port", "8797", "--host", "127.0.0.1"])
+    monkeypatch.setattr(sys, "argv", ["claude-gateway-macos", "--provider", "mimo", "--port", "8797", "--host", "127.0.0.1"])
 
     rc = module.cli()
     assert rc == 0
     assert captured["env"]["ACTIVE_PROVIDER"] == "mimo"
-    assert captured["cmd"][:4] == [sys.executable, "-m", "uvicorn", "claude_gateway.main:app"]
+    assert captured["cmd"][:4] == [sys.executable, "-m", "uvicorn", "claude_gateway_macos.main:app"]
+
+
+def test_cli_supports_minimax(monkeypatch):
+    import subprocess
+
+    monkeypatch.setenv("ACTIVE_PROVIDER", "deepseek")
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("claude_gateway_macos."):
+            del sys.modules[mod_name]
+    module = importlib.import_module("claude_gateway_macos.main")
+
+    captured: Dict[str, Any] = {}
+
+    def fake_run(cmd, env=None, check=False):
+        captured["cmd"] = cmd
+        captured["env"] = env or {}
+        captured["check"] = check
+
+        class _Result:
+            returncode = 0
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["claude-gateway-macos", "--provider", "minimax", "--port", "8890"])
+
+    rc = module.cli()
+    assert rc == 0
+    assert captured["env"]["ACTIVE_PROVIDER"] == "minimax"
+
+
+def test_info_endpoint_masks_key_and_reports_port(monkeypatch):
+    module = _reload_main(monkeypatch, {
+        "ACTIVE_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "sk-1234567890abcdef",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/anthropic",
+        "GATEWAY_PORT": "8890",
+    })
+    client = TestClient(module.app)
+    response = client.get("/v1/info")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "deepseek"
+    assert body["port"] == 8890
+    assert body["api_key"].startswith("sk-12")
+    assert body["api_key"].endswith("cdef")
+    assert body["log_file"] == ""
+    assert "https://pivot.claude.ai" in body["cors_origins"]
+
+
+def test_info_endpoint_reports_log_file(monkeypatch):
+    module = _reload_main(monkeypatch, {
+        "ACTIVE_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "sk-1234567890abcdef",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/anthropic",
+        "GATEWAY_LOG_FILE": "./gateway.log",
+    })
+    client = TestClient(module.app)
+    response = client.get("/v1/info")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["log_file"] == "./gateway.log"
+
+
+def test_cors_preflight_allows_null_origin(monkeypatch):
+    module = _reload_main(monkeypatch, {
+        "ACTIVE_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "sk-test",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/anthropic",
+    })
+    client = TestClient(module.app)
+    response = client.options(
+        "/v1/messages",
+        headers={
+            "Origin": "null",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "null"
+
+
+def test_cors_custom_origins_csv(monkeypatch):
+    module = _reload_main(monkeypatch, {
+        "ACTIVE_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "sk-test",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/anthropic",
+        "ALLOWED_ORIGIN": "https://pivot.claude.ai,null",
+    })
+    client = TestClient(module.app)
+    response = client.options(
+        "/v1/messages",
+        headers={
+            "Origin": "null",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "null"
 
 
 class TestDeepSeekProvider:

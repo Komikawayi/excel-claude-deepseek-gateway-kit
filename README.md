@@ -13,10 +13,40 @@
 
 ## 0. 仓库结构（去重后）
 
-当前仓库只维护一个实现目录：
+当前仓库维护两个实现目录：
 1. `gateway_unified/`
+2. `gateway_macos/`
 
-其余历史重复目录已从 Git 跟踪中移除，避免多套代码并行维护造成混乱。
+说明：
+1. `gateway_unified/` 是现有 Windows / 统一版，默认端口 `8790`
+2. `gateway_macos/` 是独立 macOS 版，默认端口 `8890`
+
+---
+
+## 0.1 macOS 入口
+
+如果你要在 macOS 或 Office for Mac 场景下使用，请直接进入 `gateway_macos/`：
+
+```bash
+cd gateway_macos
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+./run-gateway.sh
+```
+
+也可以用根仓库包装命令：
+
+```bash
+npm run gateway:macos:install
+npm run gateway:macos:start
+```
+
+macOS 版特性：
+1. 独立 CLI：`claude-gateway-macos`
+2. 独立端口：`8890`
+3. 支持 Office for Mac 常见的 `Origin: null` CORS 预检
+4. 支持文件日志 `GATEWAY_LOG_FILE`
+5. 提供诊断接口 `GET /v1/info`
 
 ---
 

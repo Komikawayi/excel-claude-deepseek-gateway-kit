@@ -1,7 +1,7 @@
 [project]
-name = "claude-gateway"
+name = "claude-gateway-macos"
 version = "2.0.0"
-description = "Claude-compatible gateway that proxies to DeepSeek/Kimi/MiMo"
+description = "Claude-compatible macOS gateway that proxies to DeepSeek/Kimi/MiMo/MiniMax"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
@@ -15,7 +15,7 @@ dependencies = [
 dev = ["pytest>=9.0"]
 
 [project.scripts]
-claude-gateway = "claude_gateway.main:cli"
+claude-gateway-macos = "claude_gateway_macos.main:cli"
 
 [build-system]
 requires = ["setuptools>=68"]

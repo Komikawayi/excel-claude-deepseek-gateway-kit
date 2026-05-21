@@ -10,20 +10,45 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from claude_gateway.log_mw import RequestLogMiddleware
-from claude_gateway.models import build_models_response
-from claude_gateway.providers import ProviderConfig, load_provider
-from claude_gateway.sanitize import sanitize_request_body
-from claude_gateway.stream import emit_frame, process_sse_frame
-from claude_gateway.web_search import format_web_search_tool_result_text, search_duckduckgo_html
+from claude_gateway_macos.log_mw import RequestLogMiddleware
+from claude_gateway_macos.models import build_models_response
+from claude_gateway_macos.providers import ProviderConfig, load_provider
+from claude_gateway_macos.sanitize import sanitize_request_body
+from claude_gateway_macos.stream import emit_frame, process_sse_frame
+from claude_gateway_macos.web_search import format_web_search_tool_result_text, search_duckduckgo_html
 
 # 加载 .env（不覆盖已有的环境变量，方便生产环境通过 env 注入密钥）
 load_dotenv(override=False)
 
+from claude_gateway_macos.gateway_log import activate_file_logging
+
+LOG_FILE_PATH = activate_file_logging()
+
 # 加载 provider 配置
 provider: ProviderConfig = load_provider()
 
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://pivot.claude.ai")
+DEFAULT_CORS_ORIGINS = [
+    "https://pivot.claude.ai",
+    "null",
+    "https://localhost",
+    "https://localhost:3000",
+    "https://localhost:5173",
+    "https://appsource.microsoft.com",
+    "https://store.office.com",
+]
+
+
+def _resolve_allowed_origins() -> list[str]:
+    raw = os.getenv("ALLOWED_ORIGIN", "").strip()
+    if raw == "*":
+        return ["*"]
+    if raw:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return list(DEFAULT_CORS_ORIGINS)
+
+
+ALLOWED_ORIGINS = _resolve_allowed_origins()
+ALLOW_CREDENTIALS = False if ALLOWED_ORIGINS == ["*"] else False
 
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
@@ -61,18 +86,32 @@ AUTO_WEB_SEARCH_TIMEOUT_SECONDS = _float_env("AUTO_WEB_SEARCH_TIMEOUT_SECONDS", 
 AUTO_WEB_SEARCH_MAX_ROUNDS = _int_env("AUTO_WEB_SEARCH_MAX_ROUNDS", 2)
 
 app = FastAPI(
-    title=f"Excel Claude -> {provider.name.title()} Gateway (Unified)",
+    title=f"Excel Claude -> {provider.name.title()} Gateway (macOS)",
     version="2.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ALLOWED_ORIGIN],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=ALLOW_CREDENTIALS,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 app.add_middleware(RequestLogMiddleware)
+
+print(
+    "[gateway startup] "
+    f"provider={provider.name} "
+    f"port={os.getenv('GATEWAY_PORT', '8890')} "
+    f"log_file={LOG_FILE_PATH or '<disabled>'} "
+    f"cors_origins={ALLOWED_ORIGINS}"
+)
+print(
+    "[gateway startup] "
+    f"web_search={ENABLE_WEB_SEARCH_TOOL} "
+    f"auto_web_search={ENABLE_AUTO_WEB_SEARCH_EXECUTION} "
+    f"max_body_bytes={MAX_REQUEST_BODY_BYTES}"
+)
 
 
 def _build_request_shape_summary(raw_body: Dict[str, Any], routed_model: str) -> Dict[str, Any]:
@@ -438,6 +477,62 @@ async def healthz() -> Dict[str, str]:
     return {"status": "ok", "provider": provider.name}
 
 
+def _mask_key(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 8:
+        return text[:2] + "***"
+    return text[:5] + "***" + text[-4:]
+
+
+def _provider_base_urls() -> Dict[str, Any]:
+    if getattr(provider, "name", "") == "auto":
+        return {
+            "deepseek": getattr(provider._deepseek, "base_url", ""),
+            "kimi": {
+                "coding": getattr(provider._kimi, "base_url_coding", ""),
+                "payg": getattr(provider._kimi, "base_url_payg", ""),
+            },
+            "mimo": {
+                "payg": getattr(provider._mimo, "base_url_payg", ""),
+                "token_plan": getattr(provider._mimo, "tp_base_urls", {}),
+            },
+            "minimax": getattr(provider._minimax, "base_urls", {}),
+        }
+    out: Dict[str, Any] = {}
+    if hasattr(provider, "base_url"):
+        out["default"] = getattr(provider, "base_url")
+    if hasattr(provider, "base_url_payg"):
+        out["payg"] = getattr(provider, "base_url_payg")
+    if hasattr(provider, "base_url_coding"):
+        out["coding"] = getattr(provider, "base_url_coding")
+    if hasattr(provider, "tp_base_urls"):
+        out["token_plan"] = getattr(provider, "tp_base_urls")
+    if hasattr(provider, "base_urls"):
+        out["regional"] = getattr(provider, "base_urls")
+    return out
+
+
+@app.get("/v1/info")
+async def gateway_info() -> Dict[str, Any]:
+    return {
+        "gateway": "excel-gateway-kit-macos",
+        "version": "2.0.0-macos",
+        "provider": provider.name,
+        "api_key": _mask_key(getattr(provider, "api_key", "")),
+        "base_urls": _provider_base_urls(),
+        "models": {
+            "primary": getattr(provider, "model_primary", ""),
+            "mid": getattr(provider, "model_mid", ""),
+            "fast": getattr(provider, "model_fast", ""),
+        },
+        "cors_origins": ALLOWED_ORIGINS,
+        "log_file": LOG_FILE_PATH or "",
+        "port": _int_env("GATEWAY_PORT", 8890),
+    }
+
+
 @app.get("/v1/models")
 async def list_models() -> Dict[str, Any]:
     return build_models_response(provider)
@@ -784,23 +879,23 @@ async def fallback(path: str) -> JSONResponse:
 
 
 def cli():
-    """命令行入口：claude-gateway --provider auto --port 8790"""
+    """命令行入口：claude-gateway-macos --provider auto --port 8890"""
     import argparse
     import subprocess
     import sys
 
-    parser = argparse.ArgumentParser(description="Claude-compatible gateway")
+    parser = argparse.ArgumentParser(description="Claude-compatible macOS gateway")
     parser.add_argument(
         "--provider",
-        choices=["deepseek", "kimi", "mimo", "auto"],
+        choices=["deepseek", "kimi", "mimo", "minimax", "auto"],
         default=os.getenv("ACTIVE_PROVIDER", "auto"),
     )
-    parser.add_argument("--port", type=int, default=int(os.getenv("GATEWAY_PORT", "8790")))
+    parser.add_argument("--port", type=int, default=int(os.getenv("GATEWAY_PORT", "8890")))
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
 
     # 注意：console script 会先 import 本模块，再调用 cli()。
-    # 若在当前进程直接 uvicorn.run("claude_gateway.main:app")，
+    # 若在当前进程直接 uvicorn.run("claude_gateway_macos.main:app")，
     # provider 可能在 import 阶段已按旧环境变量初始化，导致 --provider 不生效。
     # 这里用子进程重新启动 uvicorn，并显式注入 ACTIVE_PROVIDER，确保参数生效。
     child_env = os.environ.copy()
@@ -809,7 +904,7 @@ def cli():
         sys.executable,
         "-m",
         "uvicorn",
-        "claude_gateway.main:app",
+        "claude_gateway_macos.main:app",
         "--host",
         args.host,
         "--port",

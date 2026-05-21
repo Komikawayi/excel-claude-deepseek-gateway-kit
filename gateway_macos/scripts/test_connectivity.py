@@ -13,10 +13,10 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
-# 确保 src 布局下 claude_gateway 模块可导入
+# 确保 src 布局下 claude_gateway_macos 模块可导入
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from claude_gateway.providers import load_provider
+from claude_gateway_macos.providers import load_provider
 
 
 def make_anthropic_request(url: str, api_key: str, model: str, timeout: float = 30.0) -> dict:

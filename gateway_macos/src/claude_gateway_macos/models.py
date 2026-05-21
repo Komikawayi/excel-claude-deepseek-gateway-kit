@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from claude_gateway.providers import ProviderConfig
+from claude_gateway_macos.providers import ProviderConfig
 
 
 def build_models_response(provider: ProviderConfig) -> Dict[str, Any]:
