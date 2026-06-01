@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower_http::cors::CorsLayer;
 
+mod config;
 mod env;
 mod log_mw;
 mod models;
@@ -42,7 +43,12 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
+    // CLI 参数覆盖
+    config::apply_cli_overrides();
+
+    // 首次运行检测，加载 .env
+    let env_path = config::ensure_config()?;
+    dotenvy::from_path(&env_path).ok();
 
     // Initialize tracing
     tracing_subscriber::fmt()
