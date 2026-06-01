@@ -913,3 +913,240 @@ pub fn load_provider() -> anyhow::Result<Box<dyn Provider>> {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_config() -> BaseProviderConfig {
+        BaseProviderConfig {
+            name: "test".into(),
+            env_prefix: "".into(),
+            api_key: "".into(),
+            model_primary: "model-primary".into(),
+            model_mid: "model-mid".into(),
+            model_fast: "model-fast".into(),
+            default_max_tokens: 4096,
+            min_compat_max_tokens: 16,
+            passthrough_metadata: false,
+            alias_opus: "opus".into(),
+            alias_opus_versioned: "claude-opus-4-5".into(),
+            alias_sonnet: "sonnet".into(),
+            alias_sonnet_versioned: "claude-sonnet-4-5".into(),
+            alias_haiku: "haiku".into(),
+            alias_haiku_versioned: "claude-haiku-4-5".into(),
+            discovery_max_input_tokens: 1000000,
+            discovery_max_tokens: 64000,
+            alias_map: {
+                let mut m = HashMap::new();
+                m.insert("opus".into(), "model-primary".into());
+                m.insert("claude-opus-4-5".into(), "model-primary".into());
+                m.insert("sonnet".into(), "model-mid".into());
+                m.insert("claude-sonnet-4-5".into(), "model-mid".into());
+                m.insert("haiku".into(), "model-fast".into());
+                m.insert("claude-haiku-4-5".into(), "model-fast".into());
+                m.insert("model-primary".into(), "model-primary".into());
+                m.insert("model-mid".into(), "model-mid".into());
+                m.insert("model-fast".into(), "model-fast".into());
+                m
+            },
+        }
+    }
+
+    // --- route_model 测试 ---
+
+    #[test]
+    fn route_empty_returns_primary() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("", ""), "model-primary");
+    }
+
+    #[test]
+    fn route_alias_opus() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("opus", ""), "model-primary");
+    }
+
+    #[test]
+    fn route_alias_sonnet() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("sonnet", ""), "model-mid");
+    }
+
+    #[test]
+    fn route_alias_haiku() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("haiku", ""), "model-fast");
+    }
+
+    #[test]
+    fn route_versioned_alias() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("claude-opus-4-5", ""), "model-primary");
+        assert_eq!(cfg.route_model("claude-sonnet-4-5", ""), "model-mid");
+        assert_eq!(cfg.route_model("claude-haiku-4-5", ""), "model-fast");
+    }
+
+    #[test]
+    fn route_prefix_claude_opus() {
+        let cfg = make_config();
+        assert_eq!(
+            cfg.route_model("claude-opus-4-20250514", ""),
+            "model-primary"
+        );
+    }
+
+    #[test]
+    fn route_prefix_claude_sonnet() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("claude-sonnet-4-20250514", ""), "model-mid");
+    }
+
+    #[test]
+    fn route_prefix_claude_haiku() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("claude-haiku-4-20250514", ""), "model-fast");
+    }
+
+    #[test]
+    fn route_unknown_model_defaults_to_primary() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("gpt-4", ""), "model-primary");
+    }
+
+    #[test]
+    fn route_self_referential() {
+        let cfg = make_config();
+        assert_eq!(cfg.route_model("model-primary", ""), "model-primary");
+        assert_eq!(cfg.route_model("model-mid", ""), "model-mid");
+    }
+
+    #[test]
+    fn route_empty_mid_uses_fast() {
+        let mut cfg = make_config();
+        cfg.model_mid = "".into();
+        cfg.alias_map.insert("sonnet".into(), "model-fast".into());
+        assert_eq!(cfg.route_model("sonnet", ""), "model-fast");
+    }
+
+    // --- AutoProvider key 前缀检测 ---
+    // 注意：需要清空环境变量避免 AutoProvider::new() 读到真实 key 干扰测试
+
+    #[test]
+    fn auto_detect_deepseek_key() {
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "dk-test123".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "deepseek");
+    }
+
+    #[test]
+    fn auto_detect_kimi_key() {
+        // 清空 deepseek env key 使其不干扰前缀检测
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "sk-kimi-test".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "kimi");
+    }
+
+    #[test]
+    fn auto_detect_mimo_tp_key() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "tp-test123".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "mimo");
+    }
+
+    #[test]
+    fn auto_detect_mimo_sk_key() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "sk-mimo-test".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "mimo");
+    }
+
+    #[test]
+    fn auto_detect_minimax_sk_api_key() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "sk-api-test123".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "minimax");
+    }
+
+    #[test]
+    fn auto_detect_minimax_sk_cp_key() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "sk-cp-test123".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "minimax");
+    }
+
+    #[test]
+    fn auto_detect_fallback_mimo_for_generic_sk() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "sk-generic-key".parse().unwrap());
+        let (provider, _token) = auto.detect_provider_and_key(&headers).unwrap();
+        assert_eq!(provider.name(), "mimo");
+    }
+
+    #[test]
+    fn auto_detect_no_key_errors() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let headers = HeaderMap::new();
+        assert!(auto.detect_provider_and_key(&headers).is_err());
+    }
+
+    #[test]
+    fn auto_detect_invalid_prefix_errors() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let auto = AutoProvider::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "invalid-key-123".parse().unwrap());
+        assert!(auto.detect_provider_and_key(&headers).is_err());
+    }
+
+    // --- extract_incoming_token ---
+
+    #[test]
+    fn extract_bearer_token() {
+        let cfg = make_config();
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer sk-test123".parse().unwrap());
+        assert_eq!(
+            cfg.extract_incoming_token(&headers),
+            Some("sk-test123".into())
+        );
+    }
+
+    #[test]
+    fn extract_x_api_key() {
+        let cfg = make_config();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "sk-test456".parse().unwrap());
+        assert_eq!(
+            cfg.extract_incoming_token(&headers),
+            Some("sk-test456".into())
+        );
+    }
+
+    #[test]
+    fn extract_no_token() {
+        let cfg = make_config();
+        let headers = HeaderMap::new();
+        assert_eq!(cfg.extract_incoming_token(&headers), None);
+    }
+}

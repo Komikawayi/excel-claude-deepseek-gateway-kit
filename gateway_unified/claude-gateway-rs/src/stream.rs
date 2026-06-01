@@ -306,3 +306,203 @@ pub fn process_sse_frame(
     output_data.push(payload);
     (event_name, output_data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn frame(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    // --- 基础帧解析 ---
+
+    #[test]
+    fn empty_frame_returns_nothing() {
+        let mut state = SseState::new();
+        let (name, data) = process_sse_frame(&[], &mut state);
+        assert!(name.is_none());
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn event_only_frame_stores_pending_name() {
+        let mut state = SseState::new();
+        let f = frame(&["event: message_start"]);
+        let (name, data) = process_sse_frame(&f, &mut state);
+        assert!(name.is_none());
+        assert!(data.is_empty());
+        assert_eq!(state.pending_event_name, Some("message_start".into()));
+    }
+
+    #[test]
+    fn data_frame_with_pending_event() {
+        let mut state = SseState::new();
+        state.pending_event_name = Some("content_block_start".into());
+        let payload =
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text"}});
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (name, data) = process_sse_frame(&f, &mut state);
+        assert_eq!(name, Some("content_block_start".into()));
+        assert_eq!(data.len(), 1);
+        assert!(state.pending_event_name.is_none());
+    }
+
+    #[test]
+    fn done_frame() {
+        let mut state = SseState::new();
+        let f = frame(&["data: [DONE]"]);
+        let (name, data) = process_sse_frame(&f, &mut state);
+        assert_eq!(data, vec!["[DONE]"]);
+    }
+
+    #[test]
+    fn malformed_json_emits_error_event() {
+        let mut state = SseState::new();
+        let f = frame(&["data: {not valid json"]);
+        let (name, data) = process_sse_frame(&f, &mut state);
+        assert_eq!(name, Some("error".into()));
+        assert_eq!(data.len(), 1);
+        let parsed: Value = serde_json::from_str(&data[0]).unwrap();
+        assert_eq!(parsed["type"], "error");
+    }
+
+    // --- 合成 content_block_start ---
+
+    #[test]
+    fn delta_without_prior_start_synthesizes_block() {
+        let mut state = SseState::new();
+        let payload = json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hello"}
+        });
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (_name, data) = process_sse_frame(&f, &mut state);
+        // 应该产生合成 start + 原始 delta
+        assert!(
+            data.len() >= 2,
+            "expected synthetic start + delta, got {}",
+            data.len()
+        );
+        let start: Value = serde_json::from_str(&data[0]).unwrap();
+        assert_eq!(start["type"], "content_block_start");
+        assert_eq!(start["index"], 0);
+        assert!(state.seen_block_starts.contains(&0));
+    }
+
+    #[test]
+    fn stop_without_prior_start_synthesizes_block() {
+        let mut state = SseState::new();
+        let payload = json!({
+            "type": "content_block_stop",
+            "index": 1
+        });
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (_name, data) = process_sse_frame(&f, &mut state);
+        assert!(data.len() >= 2);
+        let start: Value = serde_json::from_str(&data[0]).unwrap();
+        assert_eq!(start["type"], "content_block_start");
+        assert_eq!(start["index"], 1);
+    }
+
+    #[test]
+    fn delta_with_prior_start_no_synthetic() {
+        let mut state = SseState::new();
+        state.seen_block_starts.insert(0);
+        state.block_kind_by_index.insert(0, "text".into());
+        let payload = json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hi"}
+        });
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (_name, data) = process_sse_frame(&f, &mut state);
+        // 只有原始 payload，无合成 start
+        assert_eq!(data.len(), 1);
+    }
+
+    // --- Tool input 缓冲 ---
+
+    #[test]
+    fn tool_use_delta_is_buffered() {
+        let mut state = SseState::new();
+        state.seen_block_starts.insert(0);
+        state.block_kind_by_index.insert(0, "tool_use".into());
+
+        let payload = json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": "{\"q\":"}
+        });
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (_name, data) = process_sse_frame(&f, &mut state);
+        // 被缓冲，不产生输出
+        assert!(
+            data.is_empty(),
+            "tool delta should be buffered, got {:?}",
+            data
+        );
+        assert_eq!(
+            state.tool_partial_json_by_index.get(&0),
+            Some(&"{\"q\":".to_string())
+        );
+    }
+
+    #[test]
+    fn tool_use_stop_emits_normalized_input() {
+        let mut state = SseState::new();
+        state.seen_block_starts.insert(0);
+        state.block_kind_by_index.insert(0, "tool_use".into());
+        state
+            .tool_partial_json_by_index
+            .insert(0, "{\"query\":\"test\"}".into());
+
+        let payload = json!({
+            "type": "content_block_stop",
+            "index": 0
+        });
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (_name, data) = process_sse_frame(&f, &mut state);
+        // 应产生 normalized delta + stop
+        assert!(data.len() >= 2, "expected delta + stop, got {}", data.len());
+        let delta: Value = serde_json::from_str(&data[0]).unwrap();
+        assert_eq!(delta["type"], "content_block_delta");
+        assert_eq!(delta["delta"]["type"], "input_json_delta");
+        // buffer 应被清理
+        assert!(state.tool_partial_json_by_index.get(&0).is_none());
+    }
+
+    #[test]
+    fn tool_use_multiple_deltas_concatenated() {
+        let mut state = SseState::new();
+        state.seen_block_starts.insert(0);
+        state.block_kind_by_index.insert(0, "tool_use".into());
+
+        // 第一个 delta
+        let p1 = json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"q\":"}});
+        process_sse_frame(&frame(&[&format!("data: {}", p1)]), &mut state);
+
+        // 第二个 delta
+        let p2 = json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"test\"}"}});
+        process_sse_frame(&frame(&[&format!("data: {}", p2)]), &mut state);
+
+        assert_eq!(
+            state.tool_partial_json_by_index.get(&0),
+            Some(&"{\"q\":\"test\"}".to_string())
+        );
+    }
+
+    // --- Event name 传递 ---
+
+    #[test]
+    fn event_name_propagated_to_output() {
+        let mut state = SseState::new();
+        state.pending_event_name = Some("message_start".into());
+        let payload = json!({"type": "message_start", "message": {}});
+        let f = frame(&[&format!("data: {}", payload)]);
+        let (name, _data) = process_sse_frame(&f, &mut state);
+        assert_eq!(name, Some("message_start".into()));
+    }
+}
