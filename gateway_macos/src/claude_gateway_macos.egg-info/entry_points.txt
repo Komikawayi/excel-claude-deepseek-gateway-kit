@@ -1,0 +1,2 @@
+[console_scripts]
+claude-gateway-macos = claude_gateway_macos.main:cli

@@ -23,7 +23,21 @@ load_dotenv(override=False)
 # 加载 provider 配置
 provider: ProviderConfig = load_provider()
 
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://pivot.claude.ai")
+_ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGIN", "").strip()
+if _ALLOWED_ORIGINS_RAW == "*":
+    ALLOWED_ORIGINS = ["*"]
+elif _ALLOWED_ORIGINS_RAW:
+    ALLOWED_ORIGINS = [item.strip() for item in _ALLOWED_ORIGINS_RAW.split(",") if item.strip()]
+else:
+    ALLOWED_ORIGINS = [
+        "https://pivot.claude.ai",
+        "null",
+        "https://localhost",
+        "https://localhost:3000",
+        "https://localhost:5173",
+        "https://appsource.microsoft.com",
+        "https://store.office.com",
+    ]
 
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
@@ -67,7 +81,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ALLOWED_ORIGIN],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],

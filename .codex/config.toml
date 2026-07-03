@@ -1,0 +1,10 @@
+[mcp_servers.context7]
+command = "npx"
+args = [
+    "-y",
+    "@upstash/context7-mcp@latest",
+]
+
+[mcp_servers.screenshot-full-page-mcp]
+command = "node"
+args = ["C:/Users/Komi/AppData/Roaming/npm/node_modules/@iflow-mcp/upnorthmedia-screenshotmcp/index.js"]
